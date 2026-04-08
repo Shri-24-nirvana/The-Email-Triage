@@ -6,10 +6,11 @@ from src.models import Email
 def grade_archive_clutter(emails: list[Email]) -> float:
     """
     Grade how well old non-urgent emails were archived.
-    
-    Emails older than 7 days with priority > 2 should be archived.
-    Urgent emails (priority 1-2) should NOT be archived.
+    Score is strictly between 0 and 1 (never 0.0 or 1.0).
     """
+    if not emails:
+        return 0.5
+    
     try:
         cutoff = datetime.now() - timedelta(days=7)
     except:
@@ -38,20 +39,37 @@ def grade_archive_clutter(emails: list[Email]) -> float:
         elif is_urgent and is_archived:
             incorrectly_archived += 1
     
+    # Handle edge cases
     if old_non_urgent == 0:
+        # No old non-urgent emails to archive
+        if incorrectly_archived > 0:
+            result = 0.001  # Penalize for archiving urgent emails
+        else:
+            result = 0.5  # Neutral score
+    
+    elif correctly_archived + incorrectly_archived == 0:
+        # No archiving happened at all
+        result = 0.001
+    
+    else:
+        precision = correctly_archived / (correctly_archived + incorrectly_archived)
+        recall = correctly_archived / old_non_urgent
+        
+        if precision + recall == 0:
+            result = 0.001
+        else:
+            f1 = 2 * (precision * recall) / (precision + recall)
+            result = f1
+    
+    # Strictly between 0 and 1
+    if result <= 0.0:
+        return 0.001
+    if result >= 1.0:
         return 0.999
     
-    precision = correctly_archived / (correctly_archived + incorrectly_archived) if (correctly_archived + incorrectly_archived) > 0 else 0
-    recall = correctly_archived / old_non_urgent if old_non_urgent > 0 else 0
+    # Add small random variation to avoid exact boundaries
+    import random
+    variation = random.uniform(-0.0001, 0.0001)
+    result = max(0.001, min(0.999, result + variation))
     
-    if precision + recall == 0:
-        return 0.001
-    
-    f1 = 2 * (precision * recall) / (precision + recall)
-    
-    if f1 >= 1.0:
-        f1 = 0.999
-    elif f1 <= 0.0:
-        f1 = 0.001
-    
-    return f1
+    return round(result, 4)

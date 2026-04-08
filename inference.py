@@ -31,6 +31,15 @@ TASKS = ["categorize_inbox", "prioritize_urgent", "archive_clutter"]
 MAX_STEPS = 20
 
 
+def clamp_score(score: float) -> float:
+    """Ensure score is strictly between 0 and 1 (not 0.0 or 1.0)."""
+    if score <= 0.0:
+        return 0.001
+    elif score >= 1.0:
+        return 0.999
+    return score
+
+
 def create_system_prompt(task_id: str) -> str:
     prompts = {
         "categorize_inbox": """You are an email triage assistant. Your task is to categorize emails into: work, personal, or spam.
@@ -137,7 +146,8 @@ def run_task(task_id: str, env: EmailTriageEnv) -> dict:
     final_state = env.state()
     emails = [Email(**e) for e in final_state["observation"]["emails"]]
     grader = GRADERS.get(task_id, GRADERS["categorize_inbox"])
-    score = grader(emails)
+    raw_score = grader(emails)
+    score = clamp_score(raw_score)
     
     print(f"[END] task_id={task_id} score={score:.4f}")
     sys.stdout.flush()
@@ -157,6 +167,7 @@ def main():
         results.append(result)
     
     total_score = sum(r["score"] for r in results) / len(results)
+    total_score = clamp_score(total_score)
     
     print(f"\n[SUMMARY] average_score={total_score:.4f}")
     print(f"[RESULTS] {json.dumps(results, indent=2)}")

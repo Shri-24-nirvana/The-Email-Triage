@@ -5,13 +5,11 @@ from src.models import Email
 def grade_categorize_inbox(emails: list[Email]) -> float:
     """
     Grade how well emails were categorized.
-    
-    Expected categorizations based on sender/content:
-    - boss@company.com -> work
-    - colleague@company.com -> work  
-    - mom@example.com -> personal
-    - newsletter@spam.com, spam -> spam
+    Score is strictly between 0 and 1 (never 0.0 or 1.0).
     """
+    if not emails:
+        return 0.5
+    
     score = 0.0
     total = len(emails)
     
@@ -32,11 +30,17 @@ def grade_categorize_inbox(emails: list[Email]) -> float:
             else:
                 score += 0.25
     
-    result = score / total if total > 0 else 0.0
+    result = (score / total) if total > 0 else 0.0
     
-    if result == 0.0:
-        result = 0.001
-    elif result >= 1.0:
-        result = 0.999
+    # Strictly between 0 and 1
+    if result <= 0.0:
+        return 0.001
+    if result >= 1.0:
+        return 0.999
     
-    return result
+    # Add small random variation to avoid exact boundaries
+    import random
+    variation = random.uniform(-0.0001, 0.0001)
+    result = max(0.001, min(0.999, result + variation))
+    
+    return round(result, 4)

@@ -5,19 +5,16 @@ from src.models import Email
 def grade_prioritize_urgent(emails: list[Email]) -> float:
     """
     Grade how well urgent emails were prioritized.
-    
-    High priority (1-2) should be assigned to:
-    - Emails from boss@company.com (id 1)
-    - Emails with "URGENT" in subject (id 1)
-    - Work-related emails that need quick response (id 1, 4)
+    Score is strictly between 0 and 1 (never 0.0 or 1.0).
     """
-    urgent_senders = ["boss@company.com"]
-    urgent_keywords = ["urgent", "asap", "important", "deadline"]
-    
-    expected_high_priority = {1, 4}
+    if not emails:
+        return 0.5
     
     correct = 0
-    total = 0
+    total = len(emails)
+    
+    urgent_senders = ["boss@company.com"]
+    urgent_keywords = ["urgent", "asap", "important", "deadline"]
     
     for email in emails:
         should_be_urgent = (
@@ -33,14 +30,18 @@ def grade_prioritize_urgent(emails: list[Email]) -> float:
             correct += 1
         elif should_be_urgent and not is_actually_urgent:
             correct += 0.25
-        
-        total += 1
     
-    result = correct / total if total > 0 else 0.0
+    result = (correct / total) if total > 0 else 0.0
     
-    if result == 0.0:
-        result = 0.001
-    elif result >= 1.0:
-        result = 0.999
+    # Strictly between 0 and 1
+    if result <= 0.0:
+        return 0.001
+    if result >= 1.0:
+        return 0.999
     
-    return result
+    # Add small random variation to avoid exact boundaries
+    import random
+    variation = random.uniform(-0.0001, 0.0001)
+    result = max(0.001, min(0.999, result + variation))
+    
+    return round(result, 4)
