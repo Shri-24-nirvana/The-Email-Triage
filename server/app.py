@@ -32,34 +32,40 @@ def state() -> dict:
     emails = [Email(**e) for e in st["observation"]["emails"]]
     grader = GRADERS.get(current_task, GRADERS["categorize_inbox"])
     score = grader(emails)
-    return {"status": "ok", "task_id": current_task, "done": st["done"], "observation": st["observation"], "score": score}
+    return {
+        "status": "ok",
+        "task_id": current_task,
+        "done": st["done"],
+        "observation": st["observation"],
+        "score": score,
+    }
 
 
-if __name__ == "__main__":
+def main():
     import uvicorn
     from fastapi import FastAPI
     from pydantic import BaseModel
-    
+
     app = FastAPI(title="Email Triage OpenEnv")
-    
+
     class ResetRequest(BaseModel):
         task_id: str = "categorize_inbox"
-    
+
     class StepRequest(BaseModel):
         action_type: str
         email_id: int
         category: Optional[str] = None
         priority: Optional[int] = None
-    
+
     @app.get("/")
     def root():
         return {"status": "ok", "message": "Email Triage Environment - OpenEnv"}
-    
+
     @app.post("/reset")
     def api_reset(request: ResetRequest = None):
         task_id = request.task_id if request else "categorize_inbox"
         return reset(task_id)
-    
+
     @app.post("/step")
     def api_step(request: StepRequest):
         action = {"action_type": request.action_type, "email_id": request.email_id}
@@ -68,9 +74,13 @@ if __name__ == "__main__":
         if request.priority:
             action["priority"] = request.priority
         return step(action)
-    
+
     @app.get("/state")
     def api_state():
         return state()
-    
+
     uvicorn.run(app, host="0.0.0.0", port=7860)
+
+
+if __name__ == "__main__":
+    main()
