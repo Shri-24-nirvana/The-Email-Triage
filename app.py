@@ -1,20 +1,90 @@
-"""Hugging Face Space application for Email Triage Environment."""
+"""Hugging Face Space application for Email Triage Environment with OpenEnv API."""
 import gradio as gr
-import json
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
+from typing import Optional
 
 from src.environment import EmailTriageEnv
 from src.models import Email
 from graders import GRADERS
 
+app = FastAPI(title="Email Triage Environment")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 env = EmailTriageEnv(seed=42)
 current_task = "categorize_inbox"
 
 
-def reset_task(task_id: str):
+class ResetRequest(BaseModel):
+    task_id: str = "categorize_inbox"
+
+
+class StepRequest(BaseModel):
+    action_type: str
+    email_id: int
+    category: Optional[str] = None
+    priority: Optional[int] = None
+
+
+@app.get("/")
+def root():
+    return {"status": "ok", "message": "Email Triage Environment - OpenEnv compatible"}
+
+
+@app.post("/reset")
+def reset(request: ResetRequest = None):
     global current_task
+    task_id = request.task_id if request else "categorize_inbox"
     current_task = task_id
     obs = env.reset(task_id)
-    return format_observation(obs), ""
+    return {"status": "ok", "observation": obs, "task_id": task_id}
+
+
+@app.post("/step")
+def step(request: StepRequest):
+    global current_task
+    
+    action = {
+        "action_type": request.action_type,
+        "email_id": request.email_id,
+    }
+    if request.category:
+        action["category"] = request.category
+    if request.priority:
+        action["priority"] = request.priority
+    
+    obs, reward, done = env.step(action)
+    
+    return {
+        "status": "ok",
+        "observation": obs,
+        "reward": reward,
+        "done": done
+    }
+
+
+@app.get("/state")
+def state():
+    st = env.state()
+    emails = [Email(**e) for e in st["observation"]["emails"]]
+    grader = GRADERS.get(current_task, GRADERS["categorize_inbox"])
+    score = grader(emails)
+    
+    return {
+        "status": "ok",
+        "task_id": current_task,
+        "done": st["done"],
+        "observation": st["observation"],
+        "score": score
+    }
 
 
 def format_observation(obs: dict) -> str:
@@ -35,6 +105,13 @@ def format_observation(obs: dict) -> str:
     lines.append(f"**Session Score:** {obs['session_score']:.2f}")
     
     return "\n".join(lines)
+
+
+def reset_task(task_id: str):
+    global current_task
+    current_task = task_id
+    obs = env.reset(task_id)
+    return format_observation(obs), ""
 
 
 def take_action(action_type: str, email_id: int, category: str, priority: int):
@@ -100,6 +177,9 @@ with gr.Blocks(title="Email Triage Environment") as demo:
     )
     demo.load(get_current_observation, outputs=[obs_display])
 
+app = gr.mount_gradio_app(app, demo, path="/")
+
 
 if __name__ == "__main__":
-    demo.launch(server_name="0.0.0.0", server_port=7860)
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=7860)
