@@ -34,9 +34,9 @@ MAX_STEPS = 20
 def clamp_score(score: float) -> float:
     """Ensure score is strictly between 0 and 1 (not 0.0 or 1.0)."""
     if score <= 0.0:
-        return 0.001
+        return 0.01
     elif score >= 1.0:
-        return 0.999
+        return 0.99
     return score
 
 

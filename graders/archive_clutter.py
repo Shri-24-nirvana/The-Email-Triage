@@ -41,35 +41,26 @@ def grade_archive_clutter(emails: list[Email]) -> float:
     
     # Handle edge cases
     if old_non_urgent == 0:
-        # No old non-urgent emails to archive
         if incorrectly_archived > 0:
-            result = 0.001  # Penalize for archiving urgent emails
+            result = 0.01
         else:
-            result = 0.5  # Neutral score
-    
+            result = 0.5
     elif correctly_archived + incorrectly_archived == 0:
-        # No archiving happened at all
-        result = 0.001
-    
+        result = 0.01
     else:
         precision = correctly_archived / (correctly_archived + incorrectly_archived)
         recall = correctly_archived / old_non_urgent
         
         if precision + recall == 0:
-            result = 0.001
+            result = 0.01
         else:
             f1 = 2 * (precision * recall) / (precision + recall)
             result = f1
     
-    # Strictly between 0 and 1
+    # Ensure strictly between 0 and 1
     if result <= 0.0:
-        return 0.001
-    if result >= 1.0:
-        return 0.999
+        result = 0.01
+    elif result >= 1.0:
+        result = 0.99
     
-    # Add small random variation to avoid exact boundaries
-    import random
-    variation = random.uniform(-0.0001, 0.0001)
-    result = max(0.001, min(0.999, result + variation))
-    
-    return round(result, 4)
+    return result

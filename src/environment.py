@@ -8,9 +8,9 @@ from .models import Email, Action, Observation, SAMPLE_EMAILS
 def clamp(value: float) -> float:
     """Ensure value is strictly between 0 and 1."""
     if value <= 0.0:
-        return 0.001
+        return 0.01
     if value >= 1.0:
-        return 0.999
+        return 0.99
     return value
 
 
@@ -49,7 +49,7 @@ class EmailTriageEnv:
     def step(self, action: dict) -> tuple[dict, float, bool]:
         action_obj = Action(**action)
         
-        reward = 0.0
+        reward = 0.01
         feedback = ""
         
         if action_obj.action_type == "categorize":
@@ -64,7 +64,7 @@ class EmailTriageEnv:
                                 raw_reward = 1.0 / len(self.emails)
                                 reward = clamp(raw_reward)
                             else:
-                                reward = 0.001
+                                reward = 0.01
                         
                         feedback = f"Categorized email {action_obj.email_id} as {action_obj.category}"
                         break
@@ -80,7 +80,7 @@ class EmailTriageEnv:
                                 raw_reward = 1.0 / len([e for e in self.emails if "boss" in e.sender or "urgent" in e.subject.lower()])
                                 reward = clamp(raw_reward)
                             else:
-                                reward = 0.001
+                                reward = 0.01
                         
                         feedback = f"Set priority of email {action_obj.email_id} to {action_obj.priority}"
                         break
@@ -92,9 +92,9 @@ class EmailTriageEnv:
                     
                     if self.task_id == "archive_clutter":
                         if email.priority > 2:
-                            reward = 0.499
+                            reward = 0.49
                         else:
-                            reward = 0.001
+                            reward = 0.01
                     
                     feedback = f"Archived email {action_obj.email_id}"
                     break

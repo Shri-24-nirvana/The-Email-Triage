@@ -33,15 +33,10 @@ def grade_prioritize_urgent(emails: list[Email]) -> float:
     
     result = (correct / total) if total > 0 else 0.0
     
-    # Strictly between 0 and 1
+    # Ensure strictly between 0 and 1
     if result <= 0.0:
-        return 0.001
-    if result >= 1.0:
-        return 0.999
+        result = 0.01
+    elif result >= 1.0:
+        result = 0.99
     
-    # Add small random variation to avoid exact boundaries
-    import random
-    variation = random.uniform(-0.0001, 0.0001)
-    result = max(0.001, min(0.999, result + variation))
-    
-    return round(result, 4)
+    return result
