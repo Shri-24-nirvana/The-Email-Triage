@@ -5,6 +5,15 @@ from datetime import datetime, timedelta
 from .models import Email, Action, Observation, SAMPLE_EMAILS
 
 
+def clamp(value: float) -> float:
+    """Ensure value is strictly between 0 and 1."""
+    if value <= 0.0:
+        return 0.001
+    if value >= 1.0:
+        return 0.999
+    return value
+
+
 class EmailTriageEnv:
     def __init__(self, seed: int = None):
         self.seed = seed
@@ -52,9 +61,10 @@ class EmailTriageEnv:
                         
                         if self.task_id == "categorize_inbox":
                             if action_obj.category in ["work", "personal", "spam"]:
-                                reward = 1.0 / len(self.emails)
+                                raw_reward = 1.0 / len(self.emails)
+                                reward = clamp(raw_reward)
                             else:
-                                reward = -0.1
+                                reward = 0.001
                         
                         feedback = f"Categorized email {action_obj.email_id} as {action_obj.category}"
                         break
@@ -67,9 +77,10 @@ class EmailTriageEnv:
                         
                         if self.task_id == "prioritize_urgent":
                             if action_obj.priority <= 2:
-                                reward = 1.0 / len([e for e in self.emails if "boss" in e.sender or "urgent" in e.subject.lower()])
+                                raw_reward = 1.0 / len([e for e in self.emails if "boss" in e.sender or "urgent" in e.subject.lower()])
+                                reward = clamp(raw_reward)
                             else:
-                                reward = 0.0
+                                reward = 0.001
                         
                         feedback = f"Set priority of email {action_obj.email_id} to {action_obj.priority}"
                         break
@@ -80,11 +91,10 @@ class EmailTriageEnv:
                     email.category = "archived"
                     
                     if self.task_id == "archive_clutter":
-                        old_date = datetime.now() - timedelta(days=10)
                         if email.priority > 2:
-                            reward = 0.5
+                            reward = 0.499
                         else:
-                            reward = -0.5
+                            reward = 0.001
                     
                     feedback = f"Archived email {action_obj.email_id}"
                     break
