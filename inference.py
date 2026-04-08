@@ -4,7 +4,8 @@ Uses OpenAI Client for LLM-based email triage decisions.
 
 Required environment variables (injected by validator):
 - API_BASE_URL: The API endpoint for the LLM proxy
-- API_KEY: Your API key
+- MODEL_NAME: The model identifier to use for inference
+- HF_TOKEN: Your Hugging Face / API key
 """
 
 import os
@@ -16,17 +17,34 @@ from src.environment import EmailTriageEnv
 from src.models import Email
 from graders import GRADERS
 
-API_BASE_URL = os.environ.get("API_BASE_URL", "https://api-inference.huggingface.co/gradients/latest")
-API_KEY = os.environ.get("API_KEY", "")
+API_BASE_URL = os.getenv("API_BASE_URL", "https://router.huggingface.co/v1")
+API_KEY = os.getenv("HF_TOKEN") or os.getenv("API_KEY", "")
+MODEL_NAME = os.getenv("MODEL_NAME", "meta-llama/Llama-3.2-3B-Instruct")
+TASK_NAME = os.getenv("TASK_NAME", "email-triage")
+BENCHMARK = os.getenv("BENCHMARK", "email-triage")
+MAX_STEPS = 20
+TEMPERATURE = 0.7
+MAX_TOKENS = 150
 
 client = OpenAI(
     base_url=API_BASE_URL,
     api_key=API_KEY,
 )
 
-MODEL_NAME = os.environ.get("MODEL_NAME", "meta-llama/Llama-3.2-3B-Instruct")
-TASKS = ["categorize_inbox", "prioritize_urgent", "archive_clutter"]
-MAX_STEPS = 20
+
+def log_start(task: str, env: str, model: str) -> None:
+    print(f"[START] task={task} env={env} model={model}", flush=True)
+
+
+def log_step(step: int, action: str, reward: float, done: bool, error: str = None) -> None:
+    done_val = str(done).lower()
+    error_val = error if error else "null"
+    print(f"[STEP] step={step} action={action} reward={reward:.2f} done={done_val} error={error_val}", flush=True)
+
+
+def log_end(success: bool, steps: int, score: float, rewards: list) -> None:
+    rewards_str = ",".join(f"{r:.2f}" for r in rewards)
+    print(f"[END] success={str(success).lower()} steps={steps} score={score:.3f} rewards={rewards_str}", flush=True)
 
 
 def clamp_score(score: float) -> float:
@@ -85,13 +103,17 @@ def parse_llm_response(response_text: str) -> dict | None:
     return None
 
 
-def run_task(task_id: str, env: EmailTriageEnv) -> dict:
+def run_task(task_id: str) -> dict:
+    env = EmailTriageEnv(seed=42)
     obs = env.reset(task_id)
     
-    print(f"[START] task_id={task_id}")
-    sys.stdout.flush()
+    log_start(task=task_id, env=BENCHMARK, model=MODEL_NAME)
     
-    for step in range(MAX_STEPS):
+    rewards = []
+    steps_taken = 0
+    last_error = None
+    
+    for step in range(1, MAX_STEPS + 1):
         state = env.state()
         if state["done"]:
             break
@@ -112,8 +134,8 @@ def run_task(task_id: str, env: EmailTriageEnv) -> dict:
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": prompt}
                 ],
-                max_tokens=150,
-                temperature=0.1,
+                temperature=TEMPERATURE,
+                max_tokens=MAX_TOKENS,
             )
             
             response_text = response.choices[0].message.content
@@ -123,19 +145,24 @@ def run_task(task_id: str, env: EmailTriageEnv) -> dict:
                 action = {"action_type": "categorize", "email_id": inbox_emails[0]["id"], "category": "work"}
             
             obs, reward, done = env.step(action)
+            rewards.append(reward)
+            steps_taken = step
             
-            print(f"[STEP] step={step + 1} action={json.dumps(action)} reward={reward:.4f} done={done}")
-            sys.stdout.flush()
+            action_str = json.dumps(action)
+            log_step(step=step, action=action_str, reward=reward, done=done, error=None)
             
             if done:
                 break
                 
         except Exception as e:
-            print(f"[STEP] step={step + 1} error='{str(e)}'")
-            sys.stdout.flush()
-            
+            last_error = str(e)
             action = {"action_type": "categorize", "email_id": inbox_emails[0]["id"], "category": "work"}
             obs, reward, done = env.step(action)
+            rewards.append(reward)
+            steps_taken = step
+            
+            action_str = json.dumps(action)
+            log_step(step=step, action=action_str, reward=reward, done=done, error=last_error)
     
     final_state = env.state()
     emails = [Email(**e) for e in final_state["observation"]["emails"]]
@@ -143,29 +170,33 @@ def run_task(task_id: str, env: EmailTriageEnv) -> dict:
     raw_score = grader(emails)
     score = clamp_score(raw_score)
     
-    print(f"[END] task_id={task_id} score={score:.4f}")
-    sys.stdout.flush()
+    success = score > 0.0
     
-    return {"task_id": task_id, "score": score}
+    log_end(success=success, steps=steps_taken, score=score, rewards=rewards)
+    
+    return {"task_id": task_id, "score": score, "success": success}
 
 
 def main():
-    print(f"[START] model={MODEL_NAME} api_base={API_BASE_URL} tasks={TASKS}")
-    sys.stdout.flush()
+    print(f"[START] task={TASK_NAME} env={BENCHMARK} model={MODEL_NAME}", flush=True)
     
     env = EmailTriageEnv(seed=42)
     results = []
     
-    for task_id in TASKS:
-        result = run_task(task_id, env)
-        results.append(result)
+    for task_id in ["categorize_inbox", "prioritize_urgent", "archive_clutter"]:
+        try:
+            result = run_task(task_id)
+            results.append(result)
+        except Exception as e:
+            print(f"[STEP] step=1 action={{}} reward=0.00 done=true error={str(e)}", flush=True)
+            log_end(success=False, steps=0, score=0.0, rewards=[0.0])
+            results.append({"task_id": task_id, "score": 0.0, "success": False})
     
     scores = [r["score"] for r in results]
     total_score = clamp_score(sum(scores) / len(scores))
     
-    print(f"\n[SUMMARY] average_score={total_score:.4f}")
-    print(f"[RESULTS] {json.dumps(results, indent=2)}")
-    sys.stdout.flush()
+    print(f"\n[SUMMARY] average_score={total_score:.3f}", flush=True)
+    print(f"[RESULTS] {json.dumps(results, indent=2)}", flush=True)
     
     return {"average_score": total_score, "results": results}
 
