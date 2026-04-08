@@ -36,4 +36,11 @@ def grade_prioritize_urgent(emails: list[Email]) -> float:
         
         total += 1
     
-    return min(correct / total if total > 0 else 0.0, 1.0)
+    result = correct / total if total > 0 else 0.0
+    
+    if result == 0.0:
+        result = 0.001
+    elif result >= 1.0:
+        result = 0.999
+    
+    return result

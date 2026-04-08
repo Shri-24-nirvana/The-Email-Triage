@@ -32,4 +32,11 @@ def grade_categorize_inbox(emails: list[Email]) -> float:
             else:
                 score += 0.25
     
-    return min(score / total if total > 0 else 0.0, 1.0)
+    result = score / total if total > 0 else 0.0
+    
+    if result == 0.0:
+        result = 0.001
+    elif result >= 1.0:
+        result = 0.999
+    
+    return result

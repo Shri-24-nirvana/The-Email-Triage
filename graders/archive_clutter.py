@@ -39,13 +39,19 @@ def grade_archive_clutter(emails: list[Email]) -> float:
             incorrectly_archived += 1
     
     if old_non_urgent == 0:
-        return 1.0
+        return 0.999
     
     precision = correctly_archived / (correctly_archived + incorrectly_archived) if (correctly_archived + incorrectly_archived) > 0 else 0
     recall = correctly_archived / old_non_urgent if old_non_urgent > 0 else 0
     
     if precision + recall == 0:
-        return 0.0
+        return 0.001
     
     f1 = 2 * (precision * recall) / (precision + recall)
-    return min(f1, 1.0)
+    
+    if f1 >= 1.0:
+        f1 = 0.999
+    elif f1 <= 0.0:
+        f1 = 0.001
+    
+    return f1
