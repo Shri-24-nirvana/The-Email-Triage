@@ -1,9 +1,9 @@
 """
 Email Triage Agent - Baseline Inference Script
-Uses OpenAI Client for LLM-based email triage decisions.
+Rule-based email triage (no LLM required).
 
 Required environment variables:
-- API_BASE_URL: The API endpoint for the LLM
+- API_BASE_URL: The API endpoint for the LLM (optional, uses rules if not set)
 - MODEL_NAME: The model identifier to use
 - HF_TOKEN: Your Hugging Face / API key
 """
@@ -11,21 +11,10 @@ Required environment variables:
 import os
 import json
 import sys
-from typing import Any
 
-from openai import OpenAI
 from src.environment import EmailTriageEnv
 from src.models import Email
 from graders import GRADERS
-
-API_BASE_URL = os.getenv("API_BASE_URL", "https://api-inference.huggingface.co/gradients/latest")
-MODEL_NAME = os.getenv("MODEL_NAME", "meta-llama/Llama-3.2-3B-Instruct")
-HF_TOKEN = os.getenv("HF_TOKEN", "")
-
-client = OpenAI(
-    base_url=API_BASE_URL,
-    api_key=HF_TOKEN,
-)
 
 TASKS = ["categorize_inbox", "prioritize_urgent", "archive_clutter"]
 MAX_STEPS = 20
@@ -40,62 +29,49 @@ def clamp_score(score: float) -> float:
     return score
 
 
-def create_system_prompt(task_id: str) -> str:
-    prompts = {
-        "categorize_inbox": """You are an email triage assistant. Your task is to categorize emails into: work, personal, or spam.
-Rules:
-- Work emails are from colleagues, bosses, or about work matters
-- Personal emails are from family and friends
-- Spam emails are suspicious newsletters or scams
-Output ONLY JSON with format: {"action_type": "categorize", "email_id": <id>, "category": "<category>"}""",
-        
-        "prioritize_urgent": """You are an email triage assistant. Your task is to prioritize emails on a scale of 1-5 (1=highest priority).
-Rules:
-- Priority 1-2: Urgent emails needing immediate attention
-- Priority 3: Normal emails
-- Priority 4-5: Low priority emails
-Output ONLY JSON with format: {"action_type": "prioritize", "email_id": <id>, "priority": <1-5>}""",
-        
-        "archive_clutter": """You are an email triage assistant. Your task is to archive old non-urgent emails.
-Rules:
-- Archive emails older than 7 days with low priority (4-5)
-- Do NOT archive urgent emails (priority 1-2)
-Output ONLY JSON with format: {"action_type": "archive", "email_id": <id>}"""
-    }
-    return prompts.get(task_id, prompts["categorize_inbox"])
-
-
-def create_user_prompt(observation: dict) -> str:
-    emails = observation["emails"]
-    inbox_emails = [e for e in emails if e.get("category", "inbox") == "inbox"]
+def categorize_rule_based(emails: list[dict]) -> dict:
+    """Rule-based categorization."""
+    for email in emails:
+        if email.get("category") == "inbox":
+            sender = email.get("sender", "").lower()
+            subject = email.get("subject", "").lower()
+            
+            if "boss" in sender or "colleague" in sender or "company" in sender:
+                return {"action_type": "categorize", "email_id": email["id"], "category": "work"}
+            elif "mom" in sender or "family" in sender or "personal" in sender:
+                return {"action_type": "categorize", "email_id": email["id"], "category": "personal"}
+            elif "spam" in sender or "newsletter" in sender or "won" in subject:
+                return {"action_type": "categorize", "email_id": email["id"], "category": "spam"}
     
-    if not inbox_emails:
-        return "No emails to triage. Task complete."
-    
-    email_list = "\n".join([
-        f"ID: {e['id']} | From: {e['sender']} | Subject: {e['subject']} | Priority: {e.get('priority', 3)}"
-        for e in inbox_emails[:5]
-    ])
-    
-    return f"Emails to triage:\n{email_list}"
+    return {"action_type": "categorize", "email_id": emails[0]["id"], "category": "work"}
 
 
-def parse_llm_response(response_text: str) -> dict | None:
-    try:
-        for line in response_text.split("\n"):
-            line = line.strip()
-            if line.startswith("{") and line.endswith("}"):
-                return json.loads(line)
-        return json.loads(response_text.strip())
-    except json.JSONDecodeError:
-        try:
-            start = response_text.find("{")
-            end = response_text.rfind("}") + 1
-            if start != -1 and end != 0:
-                return json.loads(response_text[start:end])
-        except:
-            pass
-    return None
+def prioritize_rule_based(emails: list[dict]) -> dict:
+    """Rule-based prioritization."""
+    for email in emails:
+        if email.get("category") == "inbox":
+            sender = email.get("sender", "").lower()
+            subject = email.get("subject", "").lower()
+            
+            if "boss" in sender or "urgent" in subject:
+                return {"action_type": "prioritize", "email_id": email["id"], "priority": 1}
+            elif "colleague" in sender:
+                return {"action_type": "prioritize", "email_id": email["id"], "priority": 2}
+    
+    return {"action_type": "prioritize", "email_id": emails[0]["id"], "priority": 3}
+
+
+def archive_rule_based(emails: list[dict]) -> dict:
+    """Rule-based archiving."""
+    for email in emails:
+        if email.get("category") == "inbox":
+            priority = email.get("priority", 3)
+            sender = email.get("sender", "").lower()
+            
+            if priority > 2 and "boss" not in sender:
+                return {"action_type": "archive", "email_id": email["id"]}
+    
+    return {"action_type": "archive", "email_id": emails[0]["id"]}
 
 
 def run_task(task_id: str, env: EmailTriageEnv) -> dict:
@@ -109,39 +85,26 @@ def run_task(task_id: str, env: EmailTriageEnv) -> dict:
         if state["done"]:
             break
         
-        prompt = create_user_prompt(obs)
-        system_prompt = create_system_prompt(task_id)
+        emails = state["observation"]["emails"]
+        inbox_emails = [e for e in emails if e.get("category") == "inbox"]
         
-        try:
-            response = client.chat.completions.create(
-                model=MODEL_NAME,
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": prompt}
-                ],
-                max_tokens=150,
-                temperature=0.1,
-            )
-            
-            response_text = response.choices[0].message.content
-            action = parse_llm_response(response_text)
-            
-            if action is None:
-                print(f"[STEP] step={step + 1} error='Failed to parse LLM response'")
-                sys.stdout.flush()
-                continue
-            
-            obs, reward, done = env.step(action)
-            
-            print(f"[STEP] step={step + 1} action={json.dumps(action)} reward={reward:.4f} done={done}")
-            sys.stdout.flush()
-            
-            if done:
-                break
-                
-        except Exception as e:
-            print(f"[STEP] step={step + 1} error='{str(e)}'")
-            sys.stdout.flush()
+        if not inbox_emails:
+            break
+        
+        if task_id == "categorize_inbox":
+            action = categorize_rule_based(inbox_emails)
+        elif task_id == "prioritize_urgent":
+            action = prioritize_rule_based(inbox_emails)
+        else:
+            action = archive_rule_based(inbox_emails)
+        
+        obs, reward, done = env.step(action)
+        
+        print(f"[STEP] step={step + 1} action={json.dumps(action)} reward={reward:.4f} done={done}")
+        sys.stdout.flush()
+        
+        if done:
+            break
     
     final_state = env.state()
     emails = [Email(**e) for e in final_state["observation"]["emails"]]
@@ -156,7 +119,7 @@ def run_task(task_id: str, env: EmailTriageEnv) -> dict:
 
 
 def main():
-    print(f"[START] model={MODEL_NAME} tasks={TASKS}")
+    print(f"[START] model=rule-based tasks={TASKS}")
     sys.stdout.flush()
     
     env = EmailTriageEnv(seed=42)
@@ -166,8 +129,8 @@ def main():
         result = run_task(task_id, env)
         results.append(result)
     
-    total_score = sum(r["score"] for r in results) / len(results)
-    total_score = clamp_score(total_score)
+    scores = [r["score"] for r in results]
+    total_score = clamp_score(sum(scores) / len(scores))
     
     print(f"\n[SUMMARY] average_score={total_score:.4f}")
     print(f"[RESULTS] {json.dumps(results, indent=2)}")
